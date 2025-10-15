@@ -54,7 +54,6 @@ jobs:
           echo "🔄 Syncing dependencies..."
           gclient sync -D
           
-          # Copy LICENSE to root for easy access
           cp LICENSE ../V8_LICENSE
       
       - name: Create source archive
@@ -114,11 +113,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             python3 \
+            python3-pip \
             pkg-config \
             git \
             curl \
             lsb-release \
-            ninja-build
+            ninja-build \
+            build-essential \
+            libglib2.0-dev
       
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
@@ -141,12 +143,20 @@ jobs:
           tar -xzf v8-source.tar.gz
           echo "✅ Source extracted"
       
+      - name: Install V8 build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd v8_checkout/v8
+          echo "Installing V8 build dependencies..."
+          sudo ./build/install-build-deps.sh --no-prompt --no-chromeos-fonts
+      
       - name: Configure V8 build
         run: |
           cd v8_checkout/v8
           
           python3 tools/dev/v8gen.py ${{ matrix.config.platform }}.release
           
+          # Common configuration for all platforms
           cat >> out.gn/${{ matrix.config.platform }}.release/args.gn << 'EOF'
           v8_monolithic = true
           v8_use_external_startup_data = false
@@ -155,10 +165,23 @@ jobs:
           v8_enable_webassembly = true
           is_debug = false
           symbol_level = 0
+          EOF
+          
+          # Platform-specific configuration
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            cat >> out.gn/${{ matrix.config.platform }}.release/args.gn << 'EOF'
+          use_custom_libcxx = true
+          use_sysroot = true
+          EOF
+          else
+            # macOS
+            cat >> out.gn/${{ matrix.config.platform }}.release/args.gn << 'EOF'
           is_clang = true
           use_custom_libcxx = false
           EOF
+          fi
           
+          echo "Build configuration:"
           cat out.gn/${{ matrix.config.platform }}.release/args.gn
       
       - name: Build V8
@@ -190,8 +213,6 @@ jobs:
           fi
           
           cp -r v8_checkout/v8/include/* output/$TRIPLE/include/
-          
-          # Copy LICENSE
           cp V8_LICENSE output/$TRIPLE/LICENSE
           
           echo "✅ Artifact contents:"
@@ -304,7 +325,7 @@ jobs:
           echo "Checksum: $CHECKSUM"
           echo "$CHECKSUM" > checksum.txt
       
-      - name: Generate Package.Swift snippet
+      - name: Generate Package.swift snippet
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           CHECKSUM="${{ steps.checksum.outputs.checksum }}"
