@@ -191,7 +191,7 @@ jobs:
       - name: Download V8 source
         uses: actions/download-artifact@v4
         with:
-          name: v8-source
+          name: v8-source-${{ steps.version.outputs.version }}
       
       - name: Extract V8 source
         run: |
