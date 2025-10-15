@@ -210,13 +210,13 @@ jobs:
             tar -xzf v8-source.tar.gz
             echo "✅ Source extracted"
         
-      - name: Install V8 build dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Install V8 build dependencies
+        # if: runner.os == 'Linux'
         run: |
             cd v8_checkout/v8
             echo "Installing V8 build dependencies..."
             # Use --no-arm --no-chromeos-fonts to avoid unnecessary deps
-            sudo ./build/install-build-deps.sh --no-prompt --no-arm --no-chromeos-fonts --no-nacl
+            sudo ./build/install-build-deps.sh --no-prompt --no-chromeos-fonts
         
       - name: Configure V8 build
         run: |
@@ -502,3 +502,4 @@ jobs:
           echo "### Download" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "[V8Binary.artifactbundle.zip](https://github.com/${{ github.repository }}/releases/download/v$VERSION/V8Binary.artifactbundle.zip)" >> $GITHUB_STEP_SUMMARY
+          
