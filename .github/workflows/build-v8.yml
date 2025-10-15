@@ -68,8 +68,9 @@ jobs:
           EOF
           
           # Sync to the specific tag with shallow clone
-          echo "🔄 Syncing V8 $VERSION and dependencies..."
+          echo "🔄 Syncing V8 $VERSION..."
           gclient sync \
+            --deps=none \
             --revision=refs/tags/$VERSION \
             --no-history \
             --shallow \
