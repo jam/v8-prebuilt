@@ -1,0 +1,348 @@
+name: Build V8 Artifact Bundle
+
+on:
+  push:
+    tags:
+      - 'v*'
+  
+  workflow_dispatch:
+    inputs:
+      v8_version:
+        description: 'V8 version to build (e.g., 14.3.84)'
+        required: true
+        type: string
+      create_release:
+        description: 'Create GitHub release'
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    name: Build V8 - ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.os }}
+    timeout-minutes: 150
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - name: Linux x86_64
+            os: ubuntu-latest
+            triple: x86_64-unknown-linux-gnu
+            platform: x64
+          
+          - name: macOS x86_64
+            os: macos-13
+            triple: x86_64-apple-macosx
+            platform: x64
+          
+          - name: macOS ARM64
+            os: macos-latest
+            triple: arm64-apple-macosx
+            platform: arm64
+    
+    steps:
+      - name: Determine V8 version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.v8_version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "🏷️ Building V8 version: $VERSION"
+      
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3 \
+            pkg-config \
+            git \
+            curl \
+            lsb-release \
+            ninja-build
+      
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          python3 --version
+      
+      - name: Setup depot_tools
+        run: |
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          echo "$PWD/depot_tools" >> $GITHUB_PATH
+      
+      - name: Checkout V8
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          echo "📦 Cloning V8 version $VERSION..."
+          
+          mkdir v8_checkout
+          cd v8_checkout
+          
+          fetch v8
+          cd v8
+          
+          git checkout "$VERSION"
+          
+          echo "🔄 Syncing dependencies (this may take a while)..."
+          gclient sync -D
+      
+      - name: Configure V8 build
+        run: |
+          cd v8_checkout/v8
+          
+          python3 tools/dev/v8gen.py ${{ matrix.config.platform }}.release
+          
+          cat >> out.gn/${{ matrix.config.platform }}.release/args.gn << 'EOF'
+          v8_monolithic = true
+          v8_use_external_startup_data = false
+          is_component_build = false
+          v8_enable_i18n_support = false
+          v8_enable_webassembly = true
+          is_debug = false
+          symbol_level = 0
+          is_clang = true
+          use_custom_libcxx = false
+          EOF
+          
+          cat out.gn/${{ matrix.config.platform }}.release/args.gn
+      
+      - name: Build V8
+        run: |
+          cd v8_checkout/v8
+          
+          echo "🔨 Building V8 (this will take 30-60 minutes)..."
+          ninja -C out.gn/${{ matrix.config.platform }}.release v8_monolith
+          
+          echo "✅ Build complete!"
+          ls -lh out.gn/${{ matrix.config.platform }}.release/obj/
+      
+      - name: Prepare artifact
+        run: |
+          TRIPLE="${{ matrix.config.triple }}"
+          PLATFORM="${{ matrix.config.platform }}"
+          
+          echo "📦 Packaging artifact for $TRIPLE..."
+          
+          mkdir -p output/$TRIPLE/lib
+          mkdir -p output/$TRIPLE/include
+          
+          if [ -f "v8_checkout/v8/out.gn/$PLATFORM.release/obj/libv8_monolith.a" ]; then
+            cp v8_checkout/v8/out.gn/$PLATFORM.release/obj/libv8_monolith.a \
+               output/$TRIPLE/lib/
+          else
+            echo "❌ Error: libv8_monolith.a not found!"
+            exit 1
+          fi
+          
+          cp -r v8_checkout/v8/include/* output/$TRIPLE/include/
+          
+          # Copy V8 LICENSE from the cloned repo
+          cp v8_checkout/v8/LICENSE output/$TRIPLE/LICENSE
+          
+          echo "✅ Artifact contents:"
+          ls -lh output/$TRIPLE/lib/
+          echo "Library size: $(du -h output/$TRIPLE/lib/libv8_monolith.a | cut -f1)"
+      
+      - name: Upload platform artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: v8-${{ matrix.config.triple }}
+          path: output/${{ matrix.config.triple }}
+          retention-days: 1
+          if-no-files-found: error
+
+  create-bundle:
+    name: Create Artifact Bundle
+    needs: build
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Determine V8 version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.v8_version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "V8 version: $VERSION"
+      
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Create artifact bundle
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          
+          echo "📦 Creating artifact bundle for V8 $VERSION..."
+          
+          mkdir -p V8Binary.artifactbundle
+          
+          mv artifacts/v8-x86_64-unknown-linux-gnu \
+             V8Binary.artifactbundle/x86_64-unknown-linux-gnu
+          
+          mv artifacts/v8-x86_64-apple-macosx \
+             V8Binary.artifactbundle/x86_64-apple-macosx
+          
+          mv artifacts/v8-arm64-apple-macosx \
+             V8Binary.artifactbundle/arm64-apple-macosx
+          
+          cat > V8Binary.artifactbundle/info.json << EOF
+          {
+            "schemaVersion": "1.0",
+            "artifacts": {
+              "v8": {
+                "type": "library",
+                "version": "$VERSION",
+                "variants": [
+                  {
+                    "path": "x86_64-unknown-linux-gnu/lib/libv8_monolith.a",
+                    "supportedTriples": ["x86_64-unknown-linux-gnu"]
+                  },
+                  {
+                    "path": "x86_64-apple-macosx/lib/libv8_monolith.a",
+                    "supportedTriples": ["x86_64-apple-macosx"]
+                  },
+                  {
+                    "path": "arm64-apple-macosx/lib/libv8_monolith.a",
+                    "supportedTriples": ["arm64-apple-macosx"]
+                  }
+                ]
+              }
+            }
+          }
+          EOF
+          
+          echo "✅ Artifact bundle structure:"
+          tree V8Binary.artifactbundle || find V8Binary.artifactbundle -type f
+      
+      - name: Copy V8 license
+        run: |
+          # Use LICENSE from any platform artifact (they're all the same)
+          cp artifacts/v8-x86_64-unknown-linux-gnu/LICENSE \
+             V8Binary.artifactbundle/LICENSE
+      
+      - name: Create bundle archive
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          
+          echo "🗜️ Compressing artifact bundle..."
+          zip -r V8Binary.artifactbundle.zip V8Binary.artifactbundle
+          
+          SIZE=$(du -h V8Binary.artifactbundle.zip | cut -f1)
+          echo "Bundle size: $SIZE"
+      
+      - name: Compute checksum
+        id: checksum
+        run: |
+          echo "🔐 Computing checksum..."
+          CHECKSUM=$(shasum -a 256 V8Binary.artifactbundle.zip | awk '{print $1}')
+          echo "checksum=$CHECKSUM" >> $GITHUB_OUTPUT
+          echo "Checksum: $CHECKSUM"
+          echo "$CHECKSUM" > checksum.txt
+      
+      - name: Generate Package.swift snippet
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          CHECKSUM="${{ steps.checksum.outputs.checksum }}"
+          
+          cat > USAGE.md << EOF
+          # Using V8 $VERSION in Swift Package Manager
+          
+          Add this to your \`Package.swift\`:
+          
+          \`\`\`swift
+          .binaryTarget(
+              name: "V8Binary",
+              url: "https://github.com/${{ github.repository }}/releases/download/v$VERSION/V8Binary.artifactbundle.zip",
+              checksum: "$CHECKSUM"
+          )
+          \`\`\`
+          
+          ## Platforms
+          
+          - Linux (x86_64)
+          - macOS (x86_64, arm64)
+          
+          ## License
+          
+          V8 is licensed under the BSD 3-Clause License.
+          EOF
+          
+          cat USAGE.md
+      
+      - name: Create GitHub Release
+        if: |
+          github.event_name == 'push' || 
+          (github.event_name == 'workflow_dispatch' && 
+           github.event.inputs.create_release == 'true')
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: V8 v${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            V8Binary.artifactbundle.zip
+            checksum.txt
+            USAGE.md
+          body: |
+            # V8 Artifact Bundle v${{ steps.version.outputs.version }}
+            
+            Pre-built V8 JavaScript engine binaries for Swift Package Manager.
+            
+            ## 📦 Platforms
+            
+            - ✅ Linux x86_64
+            - ✅ macOS x86_64 (Intel)
+            - ✅ macOS arm64 (Apple Silicon)
+            
+            ## 🔐 Checksum
+            ```
+            ${{ steps.checksum.outputs.checksum }}
+            ```
+            
+            ## 🚀 Usage
+            ```swift
+            .binaryTarget(
+                name: "V8Binary",
+                url: "https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/V8Binary.artifactbundle.zip",
+                checksum: "${{ steps.checksum.outputs.checksum }}"
+            )
+            ```
+            
+            See [USAGE.md](https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.version }}/USAGE.md) for complete integration instructions.
+            
+            ## 📄 License
+            
+            V8 is licensed under the BSD 3-Clause License. See the LICENSE file included in the artifact bundle.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Summary
+        if: always()
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          
+          echo "## V8 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** $VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "- **Checksum:** \`${{ steps.checksum.outputs.checksum }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Download" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "[V8Binary.artifactbundle.zip](https://github.com/${{ github.repository }}/releases/download/v$VERSION/V8Binary.artifactbundle.zip)" >> $GITHUB_STEP_SUMMARY
