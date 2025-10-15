@@ -212,7 +212,16 @@ jobs:
       - name: Sync V8 dependencies
         run: |
           cd v8_checkout/v8
-          gclient sync
+          gclient status
+          git status
+          git diff
+          git reset --hard
+          gclient sync \
+            --verbose \
+            --no-history \
+            --shallow \
+            -D \
+            --jobs=16
 
       - name: Install V8 build dependencies
         if: runner.os == 'Linux'
