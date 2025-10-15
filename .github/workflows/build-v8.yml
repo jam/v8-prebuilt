@@ -25,25 +25,25 @@ jobs:
     strategy:
       matrix:
         config:
-          # - name: Linux x86_64
-          #   os: ubuntu-latest
-          #   triple: x86_64-unknown-linux-gnu
-          #   platform: x64
-          
-          # - name: Linux ARM64
-          #   os: ubuntu-24.04-arm
-          #   triple: aarch64-unknown-linux-gnu
-          #   platform: arm64
-          
-          - name: macOS x86_64
-            os: macos-14
-            triple: x86_64-apple-macosx
+          - name: Linux x86_64
+            os: ubuntu-24.04
+            triple: x86_64-unknown-linux-gnu
             platform: x64
           
-          - name: macOS ARM64
-            os: macos-14
-            triple: arm64-apple-macosx
+          - name: Linux ARM64
+            os: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
             platform: arm64
+          
+          # - name: macOS x86_64
+          #   os: macos-14
+          #   triple: x86_64-apple-macosx
+          #   platform: x64
+          
+          # - name: macOS ARM64
+          #   os: macos-14
+          #   triple: arm64-apple-macosx
+          #   platform: arm64
     
     steps:
       - name: Determine V8 version
