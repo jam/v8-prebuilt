@@ -216,7 +216,7 @@ jobs:
             cd v8_checkout/v8
             echo "Installing V8 build dependencies..."
             # Use --no-arm --no-chromeos-fonts to avoid unnecessary deps
-            sudo ./build/install-build-deps.sh --no-prompt --no-chromeos-fonts
+            sudo ./build/install-build-deps.sh --no-prompt --no-chromeos-fonts || true
         
       - name: Configure V8 build
         run: |
