@@ -158,6 +158,7 @@ jobs:
             echo "is_clang = true" >> "$ARGS_FILE"
             echo "enable_precompiled_headers = false" >> "$ARGS_FILE"
             echo "use_clang_coverage = false" >> "$ARGS_FILE"
+            echo "cflags_cc = [ \"-fno-modules\" ]" >> "$ARGS_FILE"
           fi
           
           echo "📝 Build configuration:"
