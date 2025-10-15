@@ -1,0 +1,112 @@
+name: Check for new V8 Versions
+
+on:
+  schedule:
+    # Run every Monday at 1 AM UTC
+    - cron: '0 1 * * 1'
+  
+  workflow_dispatch:
+    # Allow manual triggering
+
+jobs:
+  check-update:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history to check tags
+      
+      - name: Get current version
+        id: current
+        run: |
+          CURRENT=$(cat V8_VERSION.txt | tr -d '\n\r')
+          echo "version=$CURRENT" >> $GITHUB_OUTPUT
+          echo "Current V8 version: $CURRENT"
+      
+      - name: Get latest V8 version
+        id: latest
+        run: |
+          chmod +x scripts/get-latest-v8-version.sh
+          LATEST=$(./scripts/get-latest-v8-version.sh)
+          echo "version=$LATEST" >> $GITHUB_OUTPUT
+          echo "Latest V8 version: $LATEST"
+      
+      - name: Compare versions
+        id: compare
+        run: |
+          CURRENT="${{ steps.current.outputs.version }}"
+          LATEST="${{ steps.latest.outputs.version }}"
+          
+          if [ "$CURRENT" = "$LATEST" ]; then
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+            echo "✅ Already up to date!"
+          else
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+            echo "🆕 New version available: $LATEST (current: $CURRENT)"
+          fi
+      
+      - name: Check if release already exists
+        if: steps.compare.outputs.needs_update == 'true'
+        id: check_release
+        run: |
+          LATEST="${{ steps.latest.outputs.version }}"
+          
+          # Check if tag exists
+          if git rev-parse "v$LATEST" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Tag v$LATEST already exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Tag v$LATEST does not exist yet"
+          fi
+      
+      - name: Update version file
+        if: |
+          steps.compare.outputs.needs_update == 'true' &&
+          steps.check_release.outputs.exists == 'false'
+        run: |
+          LATEST="${{ steps.latest.outputs.version }}"
+          echo "$LATEST" > V8_VERSION.txt
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add V8_VERSION.txt
+          git commit -m "chore: update V8 to version $LATEST"
+      
+      - name: Create and push tag
+        if: |
+          steps.compare.outputs.needs_update == 'true' &&
+          steps.check_release.outputs.exists == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LATEST="${{ steps.latest.outputs.version }}"
+          
+          # Create annotated tag
+          git tag -a "v$LATEST" -m "V8 version $LATEST"
+          
+          # Push commit and tag
+          git push origin main
+          git push origin "v$LATEST"
+          
+          echo "✅ Created and pushed tag v$LATEST"
+      
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Version Check Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Current Version:** ${{ steps.current.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Latest Version:** ${{ steps.latest.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Needs Update:** ${{ steps.compare.outputs.needs_update }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.compare.outputs.needs_update }}" = "true" ]; then
+            if [ "${{ steps.check_release.outputs.exists }}" = "true" ]; then
+              echo "- **Status:** Tag already exists" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- **Status:** ✅ New tag created: v${{ steps.latest.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
