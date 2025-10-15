@@ -89,6 +89,9 @@ jobs:
             git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
           fi
           echo "$PWD/depot_tools" >> $GITHUB_PATH
+
+          # Disable metrics collection
+          echo "is-googler = false" > depot_tools/metrics.cfg
       
       - name: Fetch V8 source
         run: |
