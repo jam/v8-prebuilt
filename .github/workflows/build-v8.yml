@@ -55,7 +55,7 @@ jobs:
           mkdir v8_checkout
           cd v8_checkout
           
-          # Create .gclient file with specific tag revision
+          # Create .gclient file
           cat > .gclient << EOF
           solutions = [
             {
@@ -100,6 +100,11 @@ jobs:
             **/*.md \
             **/README* \
             2>/dev/null || true
+
+          # Commit changes so we can sync dependencies later
+          git config --global user.email "runner@github.com"
+          git config --global user.name "Github Runner"
+          git commit -am "Artifact archive preparation"
           
           cd ../..
           echo "✅ Cleanup complete"
