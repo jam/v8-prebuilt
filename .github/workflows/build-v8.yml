@@ -25,23 +25,23 @@ jobs:
     strategy:
       matrix:
         config:
-          - name: Linux x86_64
-            os: ubuntu-latest
-            triple: x86_64-unknown-linux-gnu
-            platform: x64
+          # - name: Linux x86_64
+          #   os: ubuntu-latest
+          #   triple: x86_64-unknown-linux-gnu
+          #   platform: x64
           
-          - name: Linux ARM64
-            os: ubuntu-24.04-arm
-            triple: aarch64-unknown-linux-gnu
-            platform: arm64
+          # - name: Linux ARM64
+          #   os: ubuntu-24.04-arm
+          #   triple: aarch64-unknown-linux-gnu
+          #   platform: arm64
           
           - name: macOS x86_64
-            os: macos-13
+            os: macos-15
             triple: x86_64-apple-macosx
             platform: x64
           
           - name: macOS ARM64
-            os: macos-latest
+            os: macos-15
             triple: arm64-apple-macosx
             platform: arm64
     
@@ -129,8 +129,11 @@ jobs:
           # Generate initial config
           python3 tools/dev/v8gen.py -vv ${{ matrix.config.platform }}.release
           
+          # Set args.gn path
+          ARGS_FILE="out.gn/${{ matrix.config.platform }}.release/args.gn"
+          
           # Common configuration for all platforms
-          cat >> out.gn/${{ matrix.config.platform }}.release/args.gn << 'EOF'
+          cat >> "$ARGS_FILE" << 'EOF'
           v8_monolithic = true
           v8_use_external_startup_data = false
           is_component_build = false
@@ -146,14 +149,20 @@ jobs:
           
           # Platform-specific configuration
           if [ "${{ runner.os }}" = "Linux" ]; then
-            echo "use_sysroot = false" >> out.gn/${{ matrix.config.platform }}.release/args.gn
+            echo "use_sysroot = false" >> "$ARGS_FILE"
           else
             # macOS
-            echo "is_clang = true" >> out.gn/${{ matrix.config.platform }}.release/args.gn
+            echo "is_clang = true" >> "$ARGS_FILE"
+            echo "enable_precompiled_headers = false" >> "$ARGS_FILE"
+            echo "use_clang_coverage = false" >> "$ARGS_FILE"
           fi
           
           echo "📝 Build configuration:"
-          cat out.gn/${{ matrix.config.platform }}.release/args.gn
+          cat "$ARGS_FILE"
+          
+          # Regenerate build files
+          echo "🔄 Generating build files..."
+          gn gen out.gn/${{ matrix.config.platform }}.release
           
           # Regenerate build files
           echo "🔄 Generating build files..."
