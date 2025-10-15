@@ -4,7 +4,9 @@
 set -e
 
 # Clone V8 repository (shallow, tags only)
-echo "Fetching V8 tags..."
+# Send status messages to stderr so they don't interfere with output
+echo "Fetching V8 tags..." >&2
+
 git clone --depth=1 --no-checkout --filter=tree:0 \
   https://chromium.googlesource.com/v8/v8.git v8-temp 2>/dev/null || true
 
@@ -24,4 +26,5 @@ LATEST=$(git tag -l | \
 cd ..
 rm -rf v8-temp
 
+# Only output the version number to stdout
 echo "$LATEST"
