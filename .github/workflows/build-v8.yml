@@ -36,12 +36,12 @@ jobs:
           #   platform: arm64
           
           - name: macOS x86_64
-            os: macos-15-intel
+            os: macos-14
             triple: x86_64-apple-macosx
             platform: x64
           
           - name: macOS ARM64
-            os: macos-15
+            os: macos-14
             triple: arm64-apple-macosx
             platform: arm64
     
