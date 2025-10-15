@@ -33,86 +33,100 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "🏷️ Preparing V8 version: $VERSION"
       
+      # Cache depot_tools to avoid cloning every time
+      - name: Cache depot_tools
+        uses: actions/cache@v4
+        with:
+          path: depot_tools
+          key: depot_tools-${{ runner.os }}
+      
       - name: Setup depot_tools
         run: |
-          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          if [ ! -d "depot_tools" ]; then
+            git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          fi
           echo "$PWD/depot_tools" >> $GITHUB_PATH
       
-      - name: Checkout V8
+      - name: Checkout V8 at specific tag
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          echo "📦 Cloning V8 version $VERSION..."
+          echo "📦 Fetching V8 version $VERSION..."
           
           mkdir v8_checkout
           cd v8_checkout
           
-          fetch --no-history v8
+          # Create .gclient file with specific tag revision
+          cat > .gclient << EOF
+          solutions = [
+            {
+              "name": "v8",
+              "url": "https://chromium.googlesource.com/v8/v8.git",
+              "managed": False,
+              "custom_deps": {},
+            },
+          ]
+          EOF
+          
+          # Sync to the specific tag with shallow clone
+          echo "🔄 Syncing V8 $VERSION and dependencies..."
+          gclient sync \
+            --revision=refs/tags/$VERSION \
+            --no-history \
+            --shallow \
+            -D \
+            --jobs=16
+          
+          # Verify checkout
           cd v8
-          
-          git checkout "$VERSION"
-          
-          echo "🔄 Syncing dependencies..."
-          gclient sync -D --no-history --jobs=16
-          
+          echo "✅ Checked out: $(git describe --tags)"
           cp LICENSE ../V8_LICENSE
-
+      
       - name: Remove unnecessary files
         run: |
-          cd v8_checkout
+          cd v8_checkout/v8
           
-          echo "📦 Removing tests and documentation..."
+          echo "📦 Removing unnecessary files..."
           
-          # Remove test directories (be careful not to break the build)
-          find . -type d -name "test" -o -name "tests" -o -name "testing" | while read dir; do
-            # Keep build-essential test infrastructure
-            if [[ ! "$dir" =~ "build/config" ]] && [[ ! "$dir" =~ "tools" ]]; then
-              echo "Removing: $dir"
-              rm -rf "$dir"
-            fi
-          done
+          # Remove common non-essential directories in one pass
+          rm -rf \
+            test/ \
+            testing/ \
+            docs/ \
+            samples/ \
+            third_party/*/test/ \
+            third_party/*/tests/ \
+            third_party/*/testdata/ \
+            **/*.md \
+            **/README* \
+            2>/dev/null || true
           
-          # Remove documentation
-          find . -type d -name "docs" -o -name "doc" | while read dir; do
-            echo "Removing: $dir"
-            rm -rf "$dir"
-          done
-          
-          # Remove test data and fixtures
-          find . -type d -name "testdata" -o -name "fixtures" | while read dir; do
-            echo "Removing: $dir"
-            rm -rf "$dir"
-          done
-          
-          # Remove example directories
-          find . -type d -name "examples" -o -name "samples" | while read dir; do
-            echo "Removing: $dir"
-            rm -rf "$dir"
-          done
-          
-          cd ..
-          
+          cd ../..
           echo "✅ Cleanup complete"
-          echo "New size: $(du -sh v8_checkout | cut -f1)"
+          echo "Size: $(du -sh v8_checkout | cut -f1)"
       
       - name: Create source archive
         run: |
-          echo "📦 Preparing source archive..."
+          echo "📦 Creating source archive..."
           
-          # Already using shallow clones, so no .git cleanup needed
-          # Just create uncompressed tar
-          tar -cf v8-source.tar v8_checkout
+          # Use pigz for parallel compression if available, otherwise gzip
+          if command -v pigz &> /dev/null; then
+            tar -cf - v8_checkout | pigz -9 > v8-source.tar.gz
+          else
+            tar -czf v8-source.tar.gz v8_checkout
+          fi
           
-          SIZE=$(du -h v8-source.tar | cut -f1)
-          echo "Archive size: $SIZE (shallow clone)"
-
+          SIZE=$(du -h v8-source.tar.gz | cut -f1)
+          echo "📊 Archive size: $SIZE"
+      
       - name: Upload source artifact
         uses: actions/upload-artifact@v4
         with:
-          name: v8-source
+          name: v8-source-${{ steps.version.outputs.version }}
           path: |
             v8-source.tar.gz
             v8_checkout/V8_LICENSE
           retention-days: 1
+          compression-level: 0  # Already compressed
 
   build:
     name: Build V8 - ${{ matrix.config.name }}
