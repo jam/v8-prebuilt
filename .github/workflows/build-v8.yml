@@ -17,9 +17,33 @@ on:
         default: true
 
 jobs:
-  prepare:
-    name: Clone V8 Source
-    runs-on: ubuntu-latest
+  build:
+    name: Build V8 - ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.os }}
+    timeout-minutes: 120
+    
+    strategy:
+      matrix:
+        config:
+          - name: Linux x86_64
+            os: ubuntu-latest
+            triple: x86_64-unknown-linux-gnu
+            platform: x64
+          
+          - name: Linux ARM64
+            os: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
+            platform: arm64
+          
+          - name: macOS x86_64
+            os: macos-13
+            triple: x86_64-apple-macosx
+            platform: x64
+          
+          - name: macOS ARM64
+            os: macos-latest
+            triple: arm64-apple-macosx
+            platform: arm64
     
     steps:
       - name: Determine V8 version
@@ -31,14 +55,33 @@ jobs:
             VERSION="${GITHUB_REF#refs/tags/v}"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "🏷️ Preparing V8 version: $VERSION"
+          echo "🏷️ Building V8 version: $VERSION for ${{ matrix.config.triple }}"
       
-      # Cache depot_tools to avoid cloning every time
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3 \
+            pkg-config \
+            git \
+            curl \
+            lsb-release \
+            ninja-build \
+            build-essential \
+            libglib2.0-dev
+      
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          python3 --version
+          xcode-select --print-path
+      
       - name: Cache depot_tools
         uses: actions/cache@v4
         with:
           path: depot_tools
-          key: depot_tools-${{ runner.os }}
+          key: depot_tools-${{ runner.os }}-${{ runner.arch }}
       
       - name: Setup depot_tools
         run: |
@@ -47,7 +90,7 @@ jobs:
           fi
           echo "$PWD/depot_tools" >> $GITHUB_PATH
       
-      - name: Checkout V8 at specific tag
+      - name: Fetch V8 source
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           echo "📦 Fetching V8 version $VERSION..."
@@ -67,269 +110,109 @@ jobs:
           ]
           EOF
           
-          # Sync to the specific tag with shallow clone
-          echo "🔄 Syncing V8 $VERSION..."
+          # Sync to specific tag with shallow clone
+          echo "🔄 Syncing V8 $VERSION and dependencies..."
           gclient sync \
-            --deps=none \
             --revision=refs/tags/$VERSION \
             --no-history \
             --shallow \
             -D \
             --jobs=16
           
-          # Verify checkout
           cd v8
           echo "✅ Checked out: $(git describe --tags)"
-          cp LICENSE ../V8_LICENSE
       
-      - name: Remove unnecessary files
-        run: |
-          cd v8_checkout/v8
-          
-          echo "📦 Removing unnecessary files..."
-          
-          # Remove common non-essential directories in one pass
-          rm -rf \
-            test/ \
-            testing/ \
-            docs/ \
-            samples/ \
-            third_party/*/test/ \
-            third_party/*/tests/ \
-            third_party/*/testdata/ \
-            **/*.md \
-            **/README* \
-            2>/dev/null || true
-
-          # Commit changes so we can sync dependencies later
-          git config --global user.email "runner@github.com"
-          git config --global user.name "Github Runner"
-          git commit -am "Artifact archive preparation"
-          
-          cd ../..
-          echo "✅ Cleanup complete"
-          echo "Size: $(du -sh v8_checkout | cut -f1)"
-      
-      - name: Create source archive
-        run: |
-          echo "📦 Creating source archive..."
-          
-          # Use pigz for parallel compression if available, otherwise gzip
-          if command -v pigz &> /dev/null; then
-            tar -cf - v8_checkout | pigz -9 > v8-source.tar.gz
-          else
-            tar -czf v8-source.tar.gz v8_checkout
-          fi
-          
-          SIZE=$(du -h v8-source.tar.gz | cut -f1)
-          echo "📊 Archive size: $SIZE"
-      
-      - name: Upload source artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: v8-source-${{ steps.version.outputs.version }}
-          path: |
-            v8-source.tar.gz
-            v8_checkout/V8_LICENSE
-          retention-days: 1
-          compression-level: 0  # Already compressed
-
-  build:
-    name: Build V8 - ${{ matrix.config.name }}
-    needs: prepare
-    runs-on: ${{ matrix.config.os }}
-    timeout-minutes: 120
-    
-    strategy:
-        matrix:
-            config:
-              - name: Linux x86_64
-                os: ubuntu-latest
-                triple: x86_64-unknown-linux-gnu
-                platform: x64
-                
-              - name: macOS x86_64
-                os: macos-15
-                triple: x86_64-apple-macosx
-                platform: x64
-                
-              - name: macOS ARM64
-                os: macos-latest
-                triple: arm64-apple-macosx
-                platform: arm64
-    
-    steps:
-      - name: Determine V8 version
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.v8_version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            python3 \
-            python3-pip \
-            pkg-config \
-            git \
-            curl \
-            lsb-release \
-            ninja-build \
-            build-essential \
-            libglib2.0-dev
-
-      - name: Install dependencies (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew update
-          brew install python git ninja
-
-      - name: Cache depot_tools
-        uses: actions/cache@v4
-        with:
-          path: depot_tools
-          key: depot_tools-${{ runner.os }}
-
-      - name: Setup depot_tools
-        run: |
-          if [ ! -d "depot_tools" ]; then
-            git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
-          fi
-          echo "$PWD/depot_tools" >> $GITHUB_PATH
-
-      - name: Download V8 source
-        uses: actions/download-artifact@v4
-        with:
-          name: v8-source-${{ steps.version.outputs.version }}
-
-      - name: Extract V8 source
-        run: |
-          echo "📦 Extracting V8 source..."
-          tar -xzf v8-source.tar.gz
-          echo "✅ Source extracted"
-
-      - name: Sync V8 dependencies
-        run: |
-          cd v8_checkout/v8
-          gclient status
-          git status
-          git diff
-          git reset --hard
-          gclient sync \
-            --verbose \
-            --no-history \
-            --shallow \
-            -D \
-            --jobs=16
-
-      - name: Install V8 build dependencies
-        if: runner.os == 'Linux'
-        run: |
-            cd v8_checkout/v8
-            echo "Installing V8 build dependencies..."
-            # Use --no-arm --no-chromeos-fonts to avoid unnecessary deps
-            sudo ./build/install-build-deps.sh --no-prompt --no-chromeos-fonts
-        
       - name: Configure V8 build
         run: |
-            cd v8_checkout/v8
-            
-            # Generate initial config
-            python3 tools/dev/v8gen.py -vv ${{ matrix.config.platform }}.release
-            
-            # Append custom configuration
-            cat >> out.gn/${{ matrix.config.platform }}.release/args.gn << 'EOF'
-            v8_monolithic = true
-            v8_use_external_startup_data = false
-            is_component_build = false
-            v8_enable_i18n_support = false
-            v8_enable_webassembly = true
-            is_debug = false
-            symbol_level = 0
-            v8_enable_pointer_compression = false
-            v8_static_library = true
-            EOF
-            
-            # Platform-specific configuration
-            if [ "${{ runner.os }}" = "Linux" ]; then
-            cat >> out.gn/${{ matrix.config.platform }}.release/args.gn << 'EOF'
-            use_custom_libcxx = false
-            use_sysroot = false
-            treat_warnings_as_errors = false
-            EOF
-            else
+          cd v8_checkout/v8
+          
+          # Generate initial config
+          python3 tools/dev/v8gen.py -vv ${{ matrix.config.platform }}.release
+          
+          # Common configuration for all platforms
+          cat >> out.gn/${{ matrix.config.platform }}.release/args.gn << 'EOF'
+          v8_monolithic = true
+          v8_use_external_startup_data = false
+          is_component_build = false
+          v8_enable_i18n_support = false
+          v8_enable_webassembly = true
+          is_debug = false
+          symbol_level = 0
+          v8_enable_pointer_compression = false
+          v8_static_library = true
+          treat_warnings_as_errors = false
+          use_custom_libcxx = false
+          EOF
+          
+          # Platform-specific configuration
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            echo "use_sysroot = false" >> out.gn/${{ matrix.config.platform }}.release/args.gn
+          else
             # macOS
-            cat >> out.gn/${{ matrix.config.platform }}.release/args.gn << 'EOF'
-            is_clang = true
-            use_custom_libcxx = false
-            treat_warnings_as_errors = false
-            EOF
-            fi
-            
-            echo "📝 Build configuration:"
-            cat out.gn/${{ matrix.config.platform }}.release/args.gn
-            
-            # CRITICAL: Regenerate build files with gn
-            echo "🔄 Generating build files..."
-            gn gen out.gn/${{ matrix.config.platform }}.release
-        
+            echo "is_clang = true" >> out.gn/${{ matrix.config.platform }}.release/args.gn
+          fi
+          
+          echo "📝 Build configuration:"
+          cat out.gn/${{ matrix.config.platform }}.release/args.gn
+          
+          # Regenerate build files
+          echo "🔄 Generating build files..."
+          gn gen out.gn/${{ matrix.config.platform }}.release
+      
       - name: Build V8
         run: |
-            cd v8_checkout/v8
-            
-            echo "🔨 Building V8 (this will take 30-60 minutes)..."
-            ninja -C out.gn/${{ matrix.config.platform }}.release -j $(nproc 2>/dev/null || sysctl -n hw.ncpu) v8_monolith
-            
-            echo "✅ Build complete!"
-            echo "Build output:"
-            find out.gn/${{ matrix.config.platform }}.release/obj -name "*.a" -type f
-        
+          cd v8_checkout/v8
+          
+          echo "🔨 Building V8 for ${{ matrix.config.triple }} (this will take 30-60 minutes)..."
+          ninja -C out.gn/${{ matrix.config.platform }}.release -j $(nproc 2>/dev/null || sysctl -n hw.ncpu) v8_monolith
+          
+          echo "✅ Build complete!"
+      
       - name: Prepare artifact
         run: |
-            TRIPLE="${{ matrix.config.triple }}"
-            PLATFORM="${{ matrix.config.platform }}"
-            
-            echo "📦 Packaging artifact for $TRIPLE..."
-            
-            mkdir -p output/$TRIPLE/lib
-            mkdir -p output/$TRIPLE/include
-            
-            # Find the actual libv8_monolith.a location (it might be in a subdirectory)
-            LIBV8_PATH=$(find v8_checkout/v8/out.gn/$PLATFORM.release/obj -name "libv8_monolith.a" -type f | head -n 1)
-            
-            if [ -n "$LIBV8_PATH" ] && [ -f "$LIBV8_PATH" ]; then
-            echo "Found libv8_monolith.a at: $LIBV8_PATH"
+          TRIPLE="${{ matrix.config.triple }}"
+          PLATFORM="${{ matrix.config.platform }}"
+          
+          echo "📦 Packaging artifact for $TRIPLE..."
+          
+          mkdir -p output/$TRIPLE/lib
+          mkdir -p output/$TRIPLE/include
+          
+          # Find libv8_monolith.a
+          LIBV8_PATH=$(find v8_checkout/v8/out.gn/$PLATFORM.release/obj -name "libv8_monolith.a" -type f | head -n 1)
+          
+          if [ -n "$LIBV8_PATH" ] && [ -f "$LIBV8_PATH" ]; then
+            echo "✅ Found libv8_monolith.a at: $LIBV8_PATH"
             cp "$LIBV8_PATH" output/$TRIPLE/lib/
-            else
+          else
             echo "❌ Error: libv8_monolith.a not found!"
-            echo "Contents of out.gn/$PLATFORM.release/obj:"
-            find v8_checkout/v8/out.gn/$PLATFORM.release/obj -type f -name "*.a"
+            echo "Searching for .a files:"
+            find v8_checkout/v8/out.gn/$PLATFORM.release/obj -name "*.a" -type f
             exit 1
-            fi
-            
-            # Copy headers
-            cp -r v8_checkout/v8/include/* output/$TRIPLE/include/
-            
-            # Copy license
-            cp V8_LICENSE output/$TRIPLE/LICENSE
-            
-            echo "✅ Artifact contents:"
-            ls -lh output/$TRIPLE/lib/
-            echo "Library size: $(du -h output/$TRIPLE/lib/libv8_monolith.a | cut -f1)"
-        
+          fi
+          
+          # Copy headers and license
+          cp -r v8_checkout/v8/include/* output/$TRIPLE/include/
+          cp v8_checkout/v8/LICENSE output/$TRIPLE/LICENSE
+          
+          echo "✅ Artifact prepared:"
+          ls -lh output/$TRIPLE/lib/
+          echo "Library size: $(du -h output/$TRIPLE/lib/libv8_monolith.a | cut -f1)"
+          
+          # Verify architecture (Linux only)
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            echo "🔍 Verifying binary architecture:"
+            file output/$TRIPLE/lib/libv8_monolith.a
+            readelf -h output/$TRIPLE/lib/libv8_monolith.a | grep Machine || true
+          fi
+      
       - name: Upload platform artifact
         uses: actions/upload-artifact@v4
         with:
-            name: v8-${{ matrix.config.triple }}
-            path: output/${{ matrix.config.triple }}
-            retention-days: 1
-            if-no-files-found: error
+          name: v8-${{ matrix.config.triple }}
+          path: output/${{ matrix.config.triple }}
+          retention-days: 1
+          if-no-files-found: error
 
   create-bundle:
     name: Create Artifact Bundle
@@ -367,8 +250,12 @@ jobs:
           
           mkdir -p V8Binary.artifactbundle
           
+          # Move all platform builds into the bundle
           mv artifacts/v8-x86_64-unknown-linux-gnu \
              V8Binary.artifactbundle/x86_64-unknown-linux-gnu
+          
+          mv artifacts/v8-aarch64-unknown-linux-gnu \
+             V8Binary.artifactbundle/aarch64-unknown-linux-gnu
           
           mv artifacts/v8-x86_64-apple-macosx \
              V8Binary.artifactbundle/x86_64-apple-macosx
@@ -376,6 +263,7 @@ jobs:
           mv artifacts/v8-arm64-apple-macosx \
              V8Binary.artifactbundle/arm64-apple-macosx
           
+          # Create info.json with all platforms
           cat > V8Binary.artifactbundle/info.json << EOF
           {
             "schemaVersion": "1.0",
@@ -387,6 +275,10 @@ jobs:
                   {
                     "path": "x86_64-unknown-linux-gnu/lib/libv8_monolith.a",
                     "supportedTriples": ["x86_64-unknown-linux-gnu"]
+                  },
+                  {
+                    "path": "aarch64-unknown-linux-gnu/lib/libv8_monolith.a",
+                    "supportedTriples": ["aarch64-unknown-linux-gnu"]
                   },
                   {
                     "path": "x86_64-apple-macosx/lib/libv8_monolith.a",
@@ -418,7 +310,7 @@ jobs:
           zip -r V8Binary.artifactbundle.zip V8Binary.artifactbundle
           
           SIZE=$(du -h V8Binary.artifactbundle.zip | cut -f1)
-          echo "Bundle size: $SIZE"
+          echo "📊 Bundle size: $SIZE"
       
       - name: Compute checksum
         id: checksum
@@ -449,8 +341,10 @@ jobs:
           
           ## Platforms
           
-          - Linux (x86_64)
-          - macOS (x86_64, arm64)
+          - ✅ Linux x86_64
+          - ✅ Linux ARM64 (aarch64)
+          - ✅ macOS x86_64 (Intel)
+          - ✅ macOS ARM64 (Apple Silicon)
           
           ## License
           
@@ -482,8 +376,9 @@ jobs:
             ## 📦 Platforms
             
             - ✅ Linux x86_64
+            - ✅ Linux ARM64 (aarch64)
             - ✅ macOS x86_64 (Intel)
-            - ✅ macOS arm64 (Apple Silicon)
+            - ✅ macOS ARM64 (Apple Silicon)
             
             ## 🔐 Checksum
             ```
@@ -517,7 +412,13 @@ jobs:
           echo "- **Version:** $VERSION" >> $GITHUB_STEP_SUMMARY
           echo "- **Checksum:** \`${{ steps.checksum.outputs.checksum }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Platforms Built" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Linux x86_64" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Linux ARM64" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ macOS x86_64" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ macOS ARM64" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Download" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "[V8Binary.artifactbundle.zip](https://github.com/${{ github.repository }}/releases/download/v$VERSION/V8Binary.artifactbundle.zip)" >> $GITHUB_STEP_SUMMARY
-          
