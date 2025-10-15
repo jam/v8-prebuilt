@@ -46,22 +46,65 @@ jobs:
           mkdir v8_checkout
           cd v8_checkout
           
-          fetch v8
+          fetch --no-history v8
           cd v8
           
           git checkout "$VERSION"
           
           echo "🔄 Syncing dependencies..."
-          gclient sync -D
+          gclient sync -D --no-history --jobs=16
           
           cp LICENSE ../V8_LICENSE
+
+      - name: Remove unnecessary files
+        run: |
+          cd v8_checkout
+          
+          echo "📦 Removing tests and documentation..."
+          
+          # Remove test directories (be careful not to break the build)
+          find . -type d -name "test" -o -name "tests" -o -name "testing" | while read dir; do
+            # Keep build-essential test infrastructure
+            if [[ ! "$dir" =~ "build/config" ]] && [[ ! "$dir" =~ "tools" ]]; then
+              echo "Removing: $dir"
+              rm -rf "$dir"
+            fi
+          done
+          
+          # Remove documentation
+          find . -type d -name "docs" -o -name "doc" | while read dir; do
+            echo "Removing: $dir"
+            rm -rf "$dir"
+          done
+          
+          # Remove test data and fixtures
+          find . -type d -name "testdata" -o -name "fixtures" | while read dir; do
+            echo "Removing: $dir"
+            rm -rf "$dir"
+          done
+          
+          # Remove example directories
+          find . -type d -name "examples" -o -name "samples" | while read dir; do
+            echo "Removing: $dir"
+            rm -rf "$dir"
+          done
+          
+          cd ..
+          
+          echo "✅ Cleanup complete"
+          echo "New size: $(du -sh v8_checkout | cut -f1)"
       
       - name: Create source archive
         run: |
-          echo "📦 Creating source archive..."
-          tar -czf v8-source.tar.gz v8_checkout
-          echo "Archive size: $(du -h v8-source.tar.gz | cut -f1)"
-      
+          echo "📦 Preparing source archive..."
+          
+          # Already using shallow clones, so no .git cleanup needed
+          # Just create uncompressed tar
+          tar -cf v8-source.tar v8_checkout
+          
+          SIZE=$(du -h v8-source.tar | cut -f1)
+          echo "Archive size: $SIZE (shallow clone)"
+
       - name: Upload source artifact
         uses: actions/upload-artifact@v4
         with:
@@ -78,7 +121,6 @@ jobs:
     timeout-minutes: 120
     
     strategy:
-      fail-fast: false
       matrix:
         config:
           - name: Linux x86_64
@@ -154,7 +196,7 @@ jobs:
         run: |
           cd v8_checkout/v8
           
-          python3 tools/dev/v8gen.py ${{ matrix.config.platform }}.release
+          python3 tools/dev/v8gen.py -vv ${{ matrix.config.platform }}.release
           
           # Common configuration for all platforms
           cat >> out.gn/${{ matrix.config.platform }}.release/args.gn << 'EOF'
