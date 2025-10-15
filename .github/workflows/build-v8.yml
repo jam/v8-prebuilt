@@ -36,12 +36,12 @@ jobs:
           #   platform: arm64
           
           - name: macOS x86_64
-            os: macos-13
+            os: macos-15-intel
             triple: x86_64-apple-macosx
             platform: x64
           
           - name: macOS ARM64
-            os: macos-14
+            os: macos-15
             triple: arm64-apple-macosx
             platform: arm64
     
@@ -147,7 +147,7 @@ jobs:
           v8_enable_pointer_compression = false
           v8_static_library = true
           treat_warnings_as_errors = false
-          use_custom_libcxx = false
+          use_custom_libcxx = true
           EOF
           
           # Platform-specific configuration
