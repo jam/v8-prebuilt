@@ -156,18 +156,18 @@ jobs:
       - name: Determine V8 version
         id: version
         run: |
-            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${{ github.event.inputs.v8_version }}"
-            else
+          else
             VERSION="${GITHUB_REF#refs/tags/v}"
-            fi
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
-        
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
-            sudo apt-get update
-            sudo apt-get install -y \
+          sudo apt-get update
+          sudo apt-get install -y \
             python3 \
             python3-pip \
             pkg-config \
@@ -177,46 +177,49 @@ jobs:
             ninja-build \
             build-essential \
             libglib2.0-dev
-        
+
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-            python3 --version
-            # Ensure Xcode command line tools are available
-            xcode-select --print-path
-        
-        # Cache depot_tools like in prepare job
+          brew update
+          brew install python git ninja
+
       - name: Cache depot_tools
         uses: actions/cache@v4
         with:
-            path: depot_tools
-            key: depot_tools-${{ runner.os }}
-        
+          path: depot_tools
+          key: depot_tools-${{ runner.os }}
+
       - name: Setup depot_tools
         run: |
-            if [ ! -d "depot_tools" ]; then
+          if [ ! -d "depot_tools" ]; then
             git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
-            fi
-            echo "$PWD/depot_tools" >> $GITHUB_PATH
-        
+          fi
+          echo "$PWD/depot_tools" >> $GITHUB_PATH
+
       - name: Download V8 source
         uses: actions/download-artifact@v4
         with:
-            name: v8-source-${{ steps.version.outputs.version }}
-        
+          name: v8-source-${{ steps.version.outputs.version }}
+
       - name: Extract V8 source
         run: |
-            echo "📦 Extracting V8 source..."
-            tar -xzf v8-source.tar.gz
-            echo "✅ Source extracted"
-        
+          echo "📦 Extracting V8 source..."
+          tar -xzf v8-source.tar.gz
+          echo "✅ Source extracted"
+
+      - name: Sync V8 dependencies
+        run: |
+          cd v8_checkout/v8
+          gclient sync
+
       - name: Install V8 build dependencies
-        # if: runner.os == 'Linux'
+        if: runner.os == 'Linux'
         run: |
             cd v8_checkout/v8
             echo "Installing V8 build dependencies..."
             # Use --no-arm --no-chromeos-fonts to avoid unnecessary deps
-            sudo ./build/install-build-deps.sh --no-prompt --no-chromeos-fonts || true
+            sudo ./build/install-build-deps.sh --no-prompt --no-chromeos-fonts
         
       - name: Configure V8 build
         run: |
