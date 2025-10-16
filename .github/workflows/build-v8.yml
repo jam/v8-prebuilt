@@ -25,15 +25,15 @@ jobs:
     strategy:
       matrix:
         config:
-          - name: Linux x86_64
-            os: ubuntu-24.04
-            triple: x86_64-unknown-linux-gnu
-            platform: x64
+          # - name: Linux x86_64
+          #   os: ubuntu-24.04
+          #   triple: x86_64-unknown-linux-gnu
+          #   platform: x64
           
-          # - name: Linux ARM64
-          #   os: ubuntu-24.04-arm
-          #   triple: aarch64-unknown-linux-gnu
-          #   platform: arm64
+          - name: Linux ARM64
+            os: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
+            platform: arm64
 
           # - name: macOS x86_64
           #   os: macos-14
@@ -153,6 +153,11 @@ jobs:
           # Platform-specific configuration
           if [ "${{ runner.os }}" = "Linux" ]; then
             echo "use_sysroot = false" >> "$ARGS_FILE"
+
+            # Explicitly set target_cpu for ARM64
+            if [ "${{ matrix.config.platform }}" = "arm64" ]; then
+              echo "target_cpu = \"arm64\"" >> "$ARGS_FILE"
+            fi
           else
             # macOS
             echo "is_clang = true" >> "$ARGS_FILE"
