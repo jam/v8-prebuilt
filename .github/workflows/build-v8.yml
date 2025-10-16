@@ -69,7 +69,10 @@ jobs:
             lsb-release \
             ninja-build \
             build-essential \
-            libglib2.0-dev
+            libglib2.0-dev \
+            clang \
+            lld \
+            libclang-rt-dev
       
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
@@ -149,18 +152,19 @@ jobs:
           v8_static_library = true
           treat_warnings_as_errors = false
           use_custom_libcxx = true
+          use_sysroot = false
           EOF
           
-          # Platform-specific configuration
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            echo "use_sysroot = false" >> "$ARGS_FILE"
-          else
-            echo "is_clang = true" >> "$ARGS_FILE"
+          # Platform-specific configuration for ARM64
+          if [ "${{ matrix.config.platform }}" = "arm64" ]; then
+            cat >> "$ARGS_FILE" << 'EOF'
+          clang_base_path = "/usr"
+          clang_use_chrome_plugins = false
+          EOF
           fi
           
           echo "📝 Build configuration:"
           cat "$ARGS_FILE"
-          
           # Generate build files
           echo "🔄 Generating build files..."
           gn gen out.gn/${{ matrix.config.platform }}.release
