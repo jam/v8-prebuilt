@@ -129,20 +129,21 @@ jobs:
         run: |
           cd v8_checkout/v8
           
-          # Generate initial config
-          python3 tools/dev/v8gen.py -vv ${{ matrix.config.platform }}.release
+          # Create output directory
+          mkdir -p out.gn/${{ matrix.config.platform }}.release
           
           # Set args.gn path
           ARGS_FILE="out.gn/${{ matrix.config.platform }}.release/args.gn"
           
-          # Common configuration for all platforms
-          cat >> "$ARGS_FILE" << 'EOF'
+          # Write complete configuration from scratch
+          cat > "$ARGS_FILE" << 'EOF'
+          is_debug = false
+          target_cpu = "${{ matrix.config.platform }}"
           v8_monolithic = true
           v8_use_external_startup_data = false
           is_component_build = false
           v8_enable_i18n_support = false
           v8_enable_webassembly = true
-          is_debug = false
           symbol_level = 0
           v8_enable_pointer_compression = false
           v8_static_library = true
@@ -153,27 +154,14 @@ jobs:
           # Platform-specific configuration
           if [ "${{ runner.os }}" = "Linux" ]; then
             echo "use_sysroot = false" >> "$ARGS_FILE"
-
-            # Explicitly set target_cpu for ARM64
-            if [ "${{ matrix.config.platform }}" = "arm64" ]; then
-              echo "target_cpu = \"arm64\"" >> "$ARGS_FILE"
-            fi
           else
-            # macOS
             echo "is_clang = true" >> "$ARGS_FILE"
-            echo "enable_precompiled_headers = false" >> "$ARGS_FILE"
-            echo "use_clang_coverage = false" >> "$ARGS_FILE"
-            echo "cflags_cc = [ \"-fno-modules\" ]" >> "$ARGS_FILE"
           fi
           
           echo "📝 Build configuration:"
           cat "$ARGS_FILE"
           
-          # Regenerate build files
-          echo "🔄 Generating build files..."
-          gn gen out.gn/${{ matrix.config.platform }}.release
-          
-          # Regenerate build files
+          # Generate build files
           echo "🔄 Generating build files..."
           gn gen out.gn/${{ matrix.config.platform }}.release
       
